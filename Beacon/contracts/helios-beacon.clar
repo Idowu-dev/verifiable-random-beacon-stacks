@@ -87,7 +87,7 @@
 (define-public (submit-commitment (commitment (buff 32)))
     (begin
         (asserts! (is-eq (var-get current-phase) "commit") ERR_COMMIT_PHASE_ENDED)
-        (asserts! (map-get? validators tx-sender) ERR_NOT_AUTHORIZED)
+        (asserts! (is-some (map-get? validators tx-sender)) ERR_NOT_AUTHORIZED)
         (asserts! 
             (is-none 
                 (map-get? commitments 
@@ -147,17 +147,21 @@
             (>= block-height (+ (var-get phase-start-block) REVEAL_WINDOW))
             ERR_REVEAL_PHASE_ENDED)
         
-        (let ((revealed-values 
-            (fold combine-revealed-values
-                (unwrap-panic 
-                    (map-get? commitments 
-                        { request-id: (var-get current-request-id), 
-                          validator: (var-get current-request-id) }))
-                (list))))
-            
-            (map-set random-seeds (var-get current-request-id) revealed-values)
-            (var-set current-phase "none")
-            (ok revealed-values))))
+        ;; Initialize with a default seed value
+        (let ((initial-seed (sha256 (concat 
+                            (unwrap-panic (to-consensus-buff? (var-get current-request-id)))
+                            (unwrap-panic (to-consensus-buff? block-height)))))
+              (commitment-data (unwrap-panic 
+                (map-get? commitments 
+                    { request-id: (var-get current-request-id), 
+                      validator: tx-sender })))
+              (revealed-value (unwrap-panic (get value commitment-data))))
+              
+            ;; Combine the revealed value with initial seed
+            (let ((final-seed (sha256 (concat initial-seed revealed-value))))
+                (map-set random-seeds (var-get current-request-id) final-seed)
+                (var-set current-phase "none")
+                (ok final-seed)))))
 
 (define-read-only (get-random-seed (request-id uint))
     (ok (unwrap! (map-get? random-seeds request-id) ERR_NO_COMMITMENT_FOUND)))
